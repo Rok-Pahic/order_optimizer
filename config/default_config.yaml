@@ -1,0 +1,7 @@
+/**:
+  ros__parameters:
+    local_system:
+      database_path: "NotSet"
+    path_visualization:
+      tf_frame_id: "map"
+      scale_factor: 100.0
