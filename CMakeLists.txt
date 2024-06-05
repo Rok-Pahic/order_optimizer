@@ -65,6 +65,9 @@ install(DIRECTORY config DESTINATION share/${PROJECT_NAME}
 install(DIRECTORY test_data DESTINATION share/${PROJECT_NAME}
 )
 
+#Install rviz data
+install(DIRECTORY rviz2 DESTINATION share/${PROJECT_NAME}
+)
 
 
 

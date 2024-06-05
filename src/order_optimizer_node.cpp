@@ -2,18 +2,17 @@
 #include "rclcpp/rclcpp.hpp"
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Vector3.h>
-//ROS interfaces
 
+//ROS interfaces
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
-
 #include "order_optimizer/msg/order_demand.hpp"
 
 
+//C++ includes
 #include <filesystem>
 #include <yaml-cpp/yaml.h>
-//#include <fstream> 
 #include <limits.h>
 
 
@@ -60,7 +59,6 @@ class NodeClass : public rclcpp::Node
 
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr calculated_path_publisher_;
 
-    //ros parameters 
 
     std::shared_ptr<YAML::Node> products_parsed_yaml_ptr_;
 
@@ -69,6 +67,8 @@ class NodeClass : public rclcpp::Node
 
     std::shared_ptr<std::vector<std::vector<double>>> path_planning_memory_ptr_;
     std::shared_ptr<std::vector<std::vector<int>>> path_planning_parent_ptr_;
+
+    geometry_msgs::msg::PoseStamped last_recived_robot_pose_;
 
     NodeClass(std::string node_name) : Node(node_name,
                     rclcpp::NodeOptions()
@@ -111,7 +111,6 @@ class NodeClass : public rclcpp::Node
 
       }
   
-
       return result;
     }
 
@@ -133,8 +132,7 @@ class NodeClass : public rclcpp::Node
 
     void robot_current_position_subscriber_CB(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
     {
-
-
+        last_recived_robot_pose_ = *msg;
     }
 
 
@@ -152,24 +150,18 @@ class NodeClass : public rclcpp::Node
         std::shared_ptr<std::vector<Product>> products_data =  std::make_shared<std::vector<Product>>();
 
 
-        RCLCPP_INFO_STREAM(this->get_logger(),"Found data for order ID: " << order.order_id << std::endl);
-        RCLCPP_INFO_STREAM(this->get_logger(), "  cx: " << order.cx << std::endl);
-        RCLCPP_INFO_STREAM(this->get_logger(),"  cy: " << order.cy << std::endl);
-        RCLCPP_INFO_STREAM(this->get_logger(),"  Products: ");
+        RCLCPP_INFO_STREAM(this->get_logger(),"Found data for order ID: " << order.order_id );
+        RCLCPP_INFO_STREAM(this->get_logger(),"Products: ");
         for (const auto& product : order.products) {
-            RCLCPP_INFO_STREAM(this->get_logger(),product << " ");
+            RCLCPP_INFO_STREAM(this->get_logger(),product );
         }
 
         search_products_data(order,products_data);
             
         std::shared_ptr<std::vector<Station>> order_path =  std::make_shared<std::vector<Station>>();
-        geometry_msgs::msg::PoseStamped robot_position;
-        robot_position.pose.position.x = 0;
-        robot_position.pose.position.y = 0;
-        robot_position.pose.position.z = 0;
-        search_for_optimal_path(order, robot_position,  products_data, order_path );
+        search_for_optimal_path(order, last_recived_robot_pose_,  products_data, order_path );
         print_path_data(order, order_path ,msg->description);
-        visualize_path( robot_position, order_path, order);
+        visualize_path( last_recived_robot_pose_, order_path, order);
     }
 
     OrderData search_order_data(int order_id)
@@ -189,7 +181,7 @@ class NodeClass : public rclcpp::Node
         std::vector<std::future<OrderData>> thread_vector;
 
 
-        for(const auto file_path : file_paths_list)
+        for(const auto & file_path : file_paths_list)
         {
             
             thread_vector.push_back(std::async(&NodeClass::parse_config_yaml, this, file_path, order_id, local_ros_parameters_["path_visualization.scale_factor"].as_double()));
@@ -251,14 +243,14 @@ class NodeClass : public rclcpp::Node
         YAML::Node orders = YAML::LoadFile(file_path);
 
 
-        RCLCPP_INFO_STREAM(this->get_logger(), file_path); 
+        RCLCPP_INFO_STREAM(this->get_logger(),"Loading and parsing finished: " << file_path); 
 
         for (std::size_t i = 0; i < orders.size(); ++i) {
 
      
             if(orders[i]["order"].as<int>() == order_id)
             {
-                RCLCPP_INFO_STREAM(this->get_logger(), orders[i]["order"].as<int>() );
+                
                 
                 order.valid = true;
                 order.order_id = orders[i]["order"].as<int>();
@@ -283,7 +275,7 @@ class NodeClass : public rclcpp::Node
     bool parse_products_yaml(const std::string file_path)
     {
         
-        RCLCPP_INFO_STREAM(this->get_logger(), file_path); 
+        RCLCPP_INFO_STREAM(this->get_logger(),"Loading and parsing configuration file: " << file_path); 
         products_parsed_yaml_ptr_ = std::make_shared<YAML::Node>(YAML::LoadFile(file_path));
 
         return true;
@@ -400,9 +392,6 @@ class NodeClass : public rclcpp::Node
 
         std::vector<Station> ordered_stations;
 
-         RCLCPP_INFO_STREAM(this->get_logger(),"Dist: "  );
-
-
         std::vector<Station> node_list;
         node_list.push_back(start_station);
 
@@ -413,8 +402,7 @@ class NodeClass : public rclcpp::Node
 
         
         node_list.push_back(end_station);
-        /*Station dumy_station{start_station};
-        node_list.push_back(dumy_station);*/
+
 
         int matrix_size = node_list.size();
         std::shared_ptr<std::vector<std::vector<double>>> distance_matrix_ptr =std::make_shared<std::vector<std::vector<double>>>(matrix_size, std::vector<double>(matrix_size));
@@ -432,20 +420,20 @@ class NodeClass : public rclcpp::Node
         path_planning_memory_ptr_ = std::make_shared<std::vector<std::vector<double>>>(matrix_size, std::vector<double>(1 << matrix_size, DBL_MAX));
         path_planning_parent_ptr_ = std::make_shared<std::vector<std::vector<int>>>(matrix_size, std::vector<int>(1 << matrix_size, -1));
 
-        //std::pair<double, std::vector<int>> tsp_result = tsp(matrix_size-1,matrix_size,distance_matrix);
 
-        double ans = DBL_MAX;
-        for (int i = 0; i < matrix_size; i++) {
-        double solution =  fun(i, (1 << (matrix_size )) - 1, distance_matrix_ptr);
+        /*for (int i = 0; i < matrix_size; i++) {
+            double solution =  search_recursive(i, (1 << (matrix_size )) - 1, distance_matrix_ptr);
 
-        RCLCPP_INFO_STREAM(this->get_logger(),"solution " << solution);
-        }
-
+            RCLCPP_INFO_STREAM(this->get_logger(),"solution " << solution);
+        }*/
+        search_recursive(matrix_size-1, (1 << (matrix_size )) - 1, distance_matrix_ptr);
+       
+        RCLCPP_INFO_STREAM(this->get_logger(), "Optimal path: ");
         std::shared_ptr<std::vector<int>> path = std::make_shared<std::vector<int>>();
-        printPath(matrix_size-1, (1 << (matrix_size)) - 1, path);
+        collect_path(matrix_size-1, (1 << (matrix_size)) - 1, path);
         
 
-        for(int t = 1; t<path->size()-1; t++) // dont add start and goal
+        for(size_t t = 1; t<path->size()-1; t++) // dont add start and goal
         {
             ordered_stations.push_back(node_list[path->at(t)]);
         }
@@ -466,31 +454,23 @@ class NodeClass : public rclcpp::Node
 
 
 
-    double fun(int i, int mask, std::shared_ptr<std::vector<std::vector<double>>> distance_matrix_ptr)
+    double search_recursive(int i, int mask, std::shared_ptr<std::vector<std::vector<double>>> distance_matrix_ptr)
     {
-        // base case
-        // if only ith bit and 1st bit is set in our mask,
-        // it implies we have visited all other nodes already
+   
         if (mask == ((1 << i) | 1 ))
             return distance_matrix_ptr->at(0)[i];
-        // memoization
+  
         if (path_planning_memory_ptr_->at(i)[mask] != DBL_MAX)
             return path_planning_memory_ptr_->at(i)[mask];
     
-        double res = DBL_MAX; // result of this sub-problem
+        double res = DBL_MAX;
     
-        // we have to travel all nodes j in mask and end the
-        // path at ith node so for every node j in mask,
-        // recursively calculate cost of travelling all nodes in
-        // mask except i and then travel back from node j to
-        // node i taking the shortest path take the minimum of
-        // all possible j nodes
-    
-        for (int j = 0; j < distance_matrix_ptr->size(); j++)
+        int node_n = distance_matrix_ptr->size();
+        for (int j = 0; j < node_n; j++)
         {
             if ((mask & (1 << j)) && j != i && j != 0)  //if j in mask is 1 not visited yet, not equal same joint , new proposed joint is not 0 (start joint), 
             {  
-                double value = fun(j, mask & (~(1 << i)), distance_matrix_ptr) + distance_matrix_ptr->at(j)[i];
+                double value = search_recursive(j, mask & (~(1 << i)), distance_matrix_ptr) + distance_matrix_ptr->at(j)[i];
                 if(value < res)
                 {   
                     res = value;
@@ -503,19 +483,19 @@ class NodeClass : public rclcpp::Node
         return res;
     }
 
-    // Function to print the path
-    void printPath(int start, int mask, std::shared_ptr<std::vector<int>> path) {
+
+    void collect_path(int start, int mask, std::shared_ptr<std::vector<int>> path) {
         
         if (mask == 1) {
-            RCLCPP_INFO_STREAM(this->get_logger(), "0 -> ");
+            RCLCPP_INFO_STREAM(this->get_logger(), "0");
             path->push_back(0);
             return;
         }
         int j = path_planning_parent_ptr_->at(start)[mask];
-
-        printPath(j, mask & (~(1 << start)), path);
+        
+        collect_path(j, mask & (~(1 << start)), path);
         path->push_back(start);
-        RCLCPP_INFO_STREAM(this->get_logger(), start << " -> ");
+        RCLCPP_INFO_STREAM(this->get_logger(), start );
       
     }
 
@@ -671,11 +651,8 @@ class NodeClass : public rclcpp::Node
         
         calculated_path_publisher_->publish(marker_list);
 
-
+        return true;
     }
-
-
-
 
 
 
