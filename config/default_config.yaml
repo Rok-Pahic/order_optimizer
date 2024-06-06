@@ -4,4 +4,4 @@
       database_path: "NotSet"
     path_visualization:
       tf_frame_id: "map"
-      scale_factor: 100.0
+      scale_factor: 1.0
